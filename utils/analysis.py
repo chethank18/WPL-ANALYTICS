@@ -77,11 +77,17 @@ def team_win_summary(df):
     winner_map = df.drop_duplicates('match_id')[['match_id', 'winner']].set_index('match_id')['winner']
     all_teams_combined['winner'] = all_teams_combined['match_id'].map(winner_map)
 
-    summary = all_teams_combined.groupby('team').apply(
-        lambda x: pd.Series({
-            'matches': len(x),
-            'wins': (x['team'] == x['winner']).sum()
-        })
+    # NOTE: deliberately NOT using groupby('team').apply(lambda x: x['team']...).
+    # In some pandas versions (observed on pandas running under Python 3.14
+    # on Streamlit Cloud), the grouping column is excluded from the group
+    # object passed into apply(), causing `KeyError: 'team'`. Computing the
+    # win/loss flag as its own column BEFORE grouping, then aggregating
+    # that column with groupby().agg(), avoids the issue entirely and
+    # works the same way across pandas versions.
+    all_teams_combined['won'] = all_teams_combined['team'] == all_teams_combined['winner']
+    summary = all_teams_combined.groupby('team').agg(
+        matches=('won', 'size'),
+        wins=('won', 'sum')
     ).reset_index()
     summary['losses'] = summary['matches'] - summary['wins']
     summary['win_pct'] = (summary['wins'] / summary['matches'] * 100).round(1)
