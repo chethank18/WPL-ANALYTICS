@@ -21,6 +21,30 @@ def _normalize_team(series: pd.Series) -> pd.Series:
 def load_data():
     df = pd.read_csv("data/wpl_combined.csv")
     df['date'] = pd.to_datetime(df['date'])
+
+    # BUG FIX: when a ball has no extra (no wide/no-ball/legbyes/byes),
+    # pandas reads that cell as NaN, not as an empty string. Several
+    # functions below filter on `extras_type.isin(['', 'legbyes', 'byes'])`
+    # to identify "legal" deliveries a bowler is credited/charged for.
+    # That filter only matches the literal empty string '' — it does NOT
+    # match NaN — so on real data, almost every normal delivery was being
+    # silently excluded from "legal" balls. This produced near-zero
+    # wicket counts and wildly inflated economy rates on the Bowling tab,
+    # since only the rare legbyes/byes deliveries survived the filter.
+    # Normalizing NaN -> '' here, once, at load time, fixes every function
+    # downstream that relies on this same pattern (top_bowlers,
+    # phase_bowling) without needing to patch each one separately.
+    if 'extras_type' in df.columns:
+        df['extras_type'] = df['extras_type'].fillna('')
+
+    # player_dismissed has the same NaN-vs-empty-string risk, and is used
+    # with `(x != '').sum()` in top_batters() to count dismissals. NaN != ''
+    # evaluates to True in pandas, so without this fix, EVERY ball would
+    # have been counted as a dismissal, making every batter's average
+    # collapse toward a tiny, wrong number.
+    if 'player_dismissed' in df.columns:
+        df['player_dismissed'] = df['player_dismissed'].fillna('')
+
     df['is_wicket'] = df['wicket_type'].notna() & (df['wicket_type'] != '')
     df['is_dot'] = (df['runs_total'] == 0) & (df['extras_type'] == '')
     df['phase'] = df['over'].apply(lambda x: 'Powerplay' if x < 6 else ('Middle' if x < 15 else 'Death'))
@@ -142,4 +166,8 @@ def venue_stats(df):
         matches=('match_id', 'nunique'),
         avg_runs=('runs_total', 'sum')
     ).reset_index()
+    # BUG FIX: this was named avg_runs but computed with 'sum', producing a
+    # cumulative total rather than a per-match average. Divide by matches
+    # to get the actual average runs per match at that venue.
+    venue['avg_runs'] = (venue['avg_runs'] / venue['matches']).round(1)
     return venue.sort_values('matches', ascending=False)
