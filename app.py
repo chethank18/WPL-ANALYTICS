@@ -28,7 +28,6 @@ html, body, [class*="css"] {
 /* Hide streamlit default elements */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
 
 /* Sidebar */
 section[data-testid="stSidebar"] {
@@ -105,6 +104,25 @@ hr {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #080c14; }
 ::-webkit-scrollbar-thumb { background: #991b1b; border-radius: 3px; }
+
+/* MOBILE FIX: previously "header {visibility: hidden;}" was hiding
+   Streamlit's whole header bar, which on narrow/mobile viewports also
+   houses the sidebar's collapse/expand toggle button -- so on phones
+   there was no way to open the sidebar at all, making the Season/Team
+   filters that lived inside it completely inaccessible. We no longer
+   hide the header element itself (see below); instead we just hide the
+   specific decorative bits we don't want, and force the sidebar toggle
+   to always stay visible and on top as a second safety net. The MAIN
+   fix is that Season/Team are now also rendered directly on the page
+   below, so they work even if the sidebar toggle is ever flaky on some
+   browser/OS combination. */
+button[kind="header"],
+section[data-testid="stSidebarCollapsedControl"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: flex !important;
+    z-index: 999999 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -152,7 +170,22 @@ def get_data():
 
 df = get_data()
 
-# ── SIDEBAR ──
+# ── FILTERS (now also on the main page, not just the sidebar) ──
+# MOBILE FIX: these used to live ONLY inside `with st.sidebar:`. On phones,
+# Streamlit's sidebar starts collapsed behind a toggle that can be easy to
+# miss (or, in this app's case, was getting hidden by a CSS rule that also
+# caught the toggle button). Putting the filters here too means mobile
+# users always have a working way to change them, with no dependency on
+# the sidebar opening correctly.
+styled_filter_row = st.columns(2)
+with styled_filter_row[0]:
+    seasons = ['All'] + sorted(df['season'].unique().tolist())
+    selected_season = st.selectbox("📅 Season", seasons, key="main_season_select")
+with styled_filter_row[1]:
+    teams = ['All'] + sorted(df['batting_team'].unique().tolist())
+    selected_team = st.selectbox("🏟️ Team", teams, key="main_team_select")
+
+# ── SIDEBAR (desktop convenience — mirrors the main-page filters above) ──
 with st.sidebar:
     st.markdown("""
     <div style="text-align:center; padding: 16px 0 24px;">
@@ -162,10 +195,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     st.markdown("---")
-    seasons = ['All'] + sorted(df['season'].unique().tolist())
-    selected_season = st.selectbox("📅 Season", seasons)
-    teams = ['All'] + sorted(df['batting_team'].unique().tolist())
-    selected_team = st.selectbox("🏟️ Team", teams)
+    st.caption("Filters are also available at the top of the page.")
+    st.markdown(f"**Season:** {selected_season}")
+    st.markdown(f"**Team:** {selected_team}")
     st.markdown("---")
     st.markdown(f"""
     <div style="color:rgba(255,255,255,0.3); font-size:11px; text-align:center; padding-top:8px;">
@@ -174,7 +206,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ── FILTERS ──
+# ── APPLY FILTERS ──
 filtered = df.copy()
 if selected_season != 'All':
     filtered = filtered[filtered['season'] == selected_season]
@@ -262,10 +294,6 @@ with tab1:
 # ── TAB 2: BOWLING ──
 with tab2:
     styled_header("Top Wicket Takers")
-    # FIX: was top_bowlers(filtered) — that pulled in bowlers from BOTH
-    # sides of every match the selected team played in (since `filtered`
-    # keeps rows where the team batted OR bowled). Use bowling_filtered so
-    # only the selected team's own bowlers show up.
     bowl_df = top_bowlers(bowling_filtered)
     fig = px.bar(bowl_df, x='bowler', y='wickets',
                  color='economy', color_continuous_scale='Plasma',
@@ -410,9 +438,6 @@ with tab4:
             st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("---")
-    # FIX: was player_bowling_profile(filtered, ...) — same opponent-leak
-    # issue as the bowling tab. Use bowling_filtered so a bowler's profile
-    # reflects only the spells they bowled for the selected team.
     b_overall, b_phase, b_season = player_bowling_profile(bowling_filtered, selected_player)
     if b_overall:
         st.markdown(f"""
@@ -558,8 +583,6 @@ with tab6:
         st.plotly_chart(fig2, use_container_width=True)
     with col2:
         styled_header("Bowlers by Phase")
-        # FIX: was phase_bowling(filtered) — included opponents' bowlers
-        # for the selected team's matches. Use bowling_filtered instead.
         phase_bowl = phase_bowling(bowling_filtered)
         sel_phase_b = st.selectbox("Phase ", ['Powerplay', 'Middle', 'Death'])
         top_b = phase_bowl[(phase_bowl['phase'] == sel_phase_b) & (phase_bowl['balls'] >= 12)]
